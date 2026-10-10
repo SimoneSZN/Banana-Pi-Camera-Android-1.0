@@ -60,7 +60,9 @@ public class MainActivity extends Activity {
         root.addView(text("I file vengono salvati in Download/BananaPiCamera sul telefono.",12));
         log=text("Registro attività",12);root.addView(log);
     }
-    private void submit(Runnable job){if(!credentials())return; worker.execute(()->{try{job.run();}catch(Exception ex){note("Errore: "+ex.getMessage());}});}
+    @FunctionalInterface
+    private interface RemoteTask { void run() throws Exception; }
+    private void submit(RemoteTask job){if(!credentials())return; worker.execute(()->{try{job.run();}catch(Exception ex){note("Errore: "+ex.getMessage());}});}
     private Session connect() throws Exception {
         JSch jsch=new JSch();File known=new File(getFilesDir(),"known_hosts");if(!known.exists())known.createNewFile();jsch.setKnownHosts(known.getAbsolutePath());
         Session s=jsch.getSession(user,host,22);s.setPassword(password);s.setConfig("StrictHostKeyChecking","ask");
