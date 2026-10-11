@@ -1,37 +1,23 @@
-# Banana Pi Camera — app Android (versione iniziale)
+# Banana Pi Camera Control Android V3.16 (progetto sorgente)
 
-App **nativa Java Android**, progettata a partire dal programma desktop `bananapi_camera_control_FINALE_313_LIVE_PREVIEW.py`.
+Questa versione riprende la logica del programma Windows V3.16: connessione SSH alla Banana Pi su 192.168.4.1, stato del ciclo e dell’avvio automatico, START/STOP, enable/disable boot, LIVE PREVIEW MJPEG 640x480 solo a ciclo fermo, conteggio file/spazio, download su Android con indicatore di avanzamento, cancellazione foto/video/entrambi, riavvio e spegnimento.
 
-## Funzioni
-- Collegamento SSH a `192.168.4.1`, utente `simone` (password richiesta, non salvata).
-- Verifica stato `camera-cycle.service`.
-- START/STOP del ciclo tramite `sudo systemctl`.
-- Conteggio foto e video e spazio libero sulla microSD.
-- Live preview MJPEG 640x480 / 10 fps; **solo se il servizio è inattivo**.
-- Scaricamento foto e video su `Download/BananaPiCamera/photos` e `Download/BananaPiCamera/video` tramite SFTP, evitando file con stesso nome e dimensione.
-- Memorizzazione della chiave pubblica del server SSH dopo approvazione iniziale.
+## Compilazione APK con GitHub Actions
+1. Crea un repository GitHub **privato**.
+2. Carica il CONTENUTO della cartella BananaPiCameraAndroid, inclusa .github/workflows/build-apk.yml.
+3. Vai in Actions > Build Android APK > Run workflow (oppure attendi il push).
+4. A build verde scarica l'artifact BananaPiCamera-debug-apk, estrai app-debug.apk, e installalo sul telefono Android.
 
-## Come generare APK, senza Android Studio
-1. Crea un repository GitHub **privato** e carica tutti i file del progetto, mantenendo le cartelle.
-2. Apri `Actions` -> `Build Android APK` -> `Run workflow`, oppure esegui push su `main`.
-3. Al termine, apri l'esecuzione e scarica `BananaPiCamera-debug-apk` sotto `Artifacts`.
-4. Estrai `app-debug.apk`, trasferiscilo su Android e installalo consentendo l'installazione dall'origine scelta.
+## Utilizzo
+- Collega il telefono dalle impostazioni Wi-Fi Android alla rete BANANAPI_CAMERA. Se Android avverte che la rete non ha Internet, scegli di rimanere connesso.
+- Inserisci IP, utente e password SSH della Banana Pi.
+- Premi STATO SERVIZIO E AGGIORNA prima di usare gli altri comandi.
+- Il controllo dell'avvio automatico modifica systemd, non avvia né ferma immediatamente il ciclo.
+- La preview è consentita solo quando camera-cycle.service è inactive/failed.
+- I comandi sudo richiedono che l'utente possa eseguire systemctl con la password SSH.
+- I download vengono salvati sotto Download/BananaPiCamera/{photos,video}; la barra misura i byte trasferiti nella selezione. I file già scaricati vengono saltati quando coincide la dimensione.
+- La cancellazione è irreversibile, richiede conferma e viene impedita quando il ciclo non è fermo.
+- Spegnimento e riavvio interrompono il Wi-Fi; lo spegnimento non toglie fisicamente alimentazione.
 
-La build richiede che GitHub Actions possa scaricare Android SDK, Gradle, plugin Android e JSch.
-
-## Uso
-1. Connetti manualmente il telefono alla rete Wi-Fi `BANANAPI_CAMERA`. Android può chiedere di restare connesso a una rete **senza Internet**: conferma.
-2. Apri l'app, inserisci la password SSH e premi `VERIFICA CONNESSIONE`.
-3. Al primo collegamento, verifica che il fingerprint SSH mostrato sia quello della tua Banana Pi prima di accettarlo. Se la chiave cambia in futuro, la connessione verrà rifiutata.
-4. Usa STOP per interrompere il ciclo; solo allora premi `LIVE PREVIEW`.
-5. Chiudi la preview prima di premere START.
-
-## Prerequisiti e limiti
-- Il servizio deve chiamarsi `camera-cycle.service`.
-- La camera deve essere `/dev/video1` e supportare MJPEG 640x480 10 fps.
-- `ffmpeg` deve essere presente sulla Banana Pi.
-- Il comando `sudo systemctl` richiede che l'utente SSH abbia i permessi sudo; si usa la password SSH anche per sudo. Se le credenziali sono diverse, serve adattare questo comando.
-- La preview usa un canale SSH video dedicato e viene chiusa prima di riavviare il ciclo.
-- Un solo dispositivo dovrebbe controllare la camera per volta; non vi è arbitraggio con il programma Windows.
-- Il download di file molto grandi attraverso Wi-Fi 2.4 GHz può richiedere tempo. Il download incrementale considera file con stesso nome e dimensione.
-- Primo prototipo: non ancora testato su un telefono e sulla Banana Pi fisica.
+## Stato del progetto
+Codice sorgente predisposto; build e test con hardware reale ancora da effettuare. Non è un APK precompilato. Per maggiore sicurezza, conferma la chiave SSH al primo accesso.

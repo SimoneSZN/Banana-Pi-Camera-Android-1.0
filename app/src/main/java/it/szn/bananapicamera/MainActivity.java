@@ -22,6 +22,7 @@ public class MainActivity extends Activity {
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private EditText hostField,userField,passField;
     private TextView status,counts,space,log;
+    private ProgressBar progress; private TextView progressText;
     private Button startBtn,previewBtn,stopPreviewBtn;
     private ImageView previewImage;
     private volatile boolean previewOn=false;
@@ -45,11 +46,14 @@ public class MainActivity extends Activity {
         hostField=field("IP Banana Pi","192.168.4.1",root,false);
         userField=field("Utente SSH","simone",root,false);
         passField=field("Password SSH","",root,true);
-        button("VERIFICA CONNESSIONE / AGGIORNA",root,v->submit(()->refresh()));
+        button("STATO SERVIZIO E AGGIORNA",root,v->submit(()->refresh()));
         status=text("Non connessa",16);root.addView(status);
         root.addView(text("REGISTRAZIONE",19));
         startBtn=button("▶ START CICLO",root,v->submit(()->service("start")));
         button("■ STOP CICLO",root,v->submit(()->service("stop")));
+        root.addView(text("AVVIO AUTOMATICO ALL’ACCENSIONE",19));
+        button("ABILITA AVVIO AUTOMATICO",root,v->submit(()->autoBoot("enable")));
+        button("DISABILITA AVVIO AUTOMATICO",root,v->submit(()->autoBoot("disable")));
         root.addView(text("LIVE PREVIEW 640 × 480",19));
         previewImage=new ImageView(this);previewImage.setBackgroundColor(Color.rgb(24,38,53));previewImage.setScaleType(ImageView.ScaleType.FIT_CENTER);root.addView(previewImage,new LinearLayout.LayoutParams(-1,dp(230)));
         previewBtn=button("▶ LIVE PREVIEW",root,v->startPreview());
@@ -57,10 +61,16 @@ public class MainActivity extends Activity {
         root.addView(text("MICROSD",19));counts=text("Foto: —    Video: —",15);space=text("Spazio: —",15);root.addView(counts);root.addView(space);
         button("SCARICA FOTO",root,v->submit(()->download(PHOTOS)));
         button("SCARICA VIDEO",root,v->submit(()->download(VIDEOS)));
+        button("SCARICA FOTO + VIDEO",root,v->submit(()->{download(PHOTOS);download(VIDEOS);}));
+        progress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);progress.setMax(100);root.addView(progress,new LinearLayout.LayoutParams(-1,dp(18)));
+        progressText=text("Nessun trasferimento",12);root.addView(progressText);
+        root.addView(text("GESTIONE MEMORIA / ALIMENTAZIONE",19));
+        button("CANCELLA FILE DALLA MICROSD",root,v->confirmDelete());
+        button("RIAVVIA BANANA PI",root,v->confirmPower("reboot"));
+        button("STOP BANANA PI (SPEGNI)",root,v->confirmPower("poweroff"));
         root.addView(text("I file vengono salvati in Download/BananaPiCamera sul telefono.",12));
         log=text("Registro attività",12);root.addView(log);
     }
-    @FunctionalInterface
     private interface RemoteTask { void run() throws Exception; }
     private void submit(RemoteTask job){if(!credentials())return; worker.execute(()->{try{job.run();}catch(Exception ex){note("Errore: "+ex.getMessage());}});}
     private Session connect() throws Exception {
@@ -74,9 +84,11 @@ public class MainActivity extends Activity {
         });
         s.connect(9000);return s;
     }
-    private String exec(Session s,String cmd) throws Exception{ChannelExec c=(ChannelExec)s.openChannel("exec");c.setCommand(cmd);ByteArrayOutputStream out=new ByteArrayOutputStream();c.setOutputStream(out);c.setErrStream(out);c.connect(8000);long until=System.currentTimeMillis()+15000;while(!c.isClosed() && System.currentTimeMillis()<until)Thread.sleep(40);if(!c.isClosed()){c.disconnect();throw new IOException("Timeout comando remoto");}int code=c.getExitStatus();c.disconnect();String value=out.toString("UTF-8").trim();if(code!=0 && !cmd.startsWith("systemctl is-active"))throw new IOException(value+" (exit "+code+")");return value;}
+    private String exec(Session s,String cmd) throws Exception{ChannelExec c=(ChannelExec)s.openChannel("exec");c.setCommand(cmd);ByteArrayOutputStream out=new ByteArrayOutputStream();c.setOutputStream(out);c.setErrStream(out);c.connect(8000);long until=System.currentTimeMillis()+15000;while(!c.isClosed() && System.currentTimeMillis()<until)Thread.sleep(40);if(!c.isClosed()){c.disconnect();throw new IOException("Timeout comando remoto");}int code=c.getExitStatus();c.disconnect();String value=out.toString("UTF-8").trim();if(code!=0 && !cmd.startsWith("systemctl is-active") && !cmd.startsWith("systemctl is-enabled"))throw new IOException(value+" (exit "+code+")");return value;}
     private String getState(Session s) throws Exception{return exec(s,"systemctl is-active "+SERVICE).trim();}
-    private void refresh() throws Exception{Session s=connect();try{String state=getState(s);recording="active".equals(state);note("Ciclo registrazione: "+state.toUpperCase(Locale.ROOT));String filecounts=exec(s,"find "+PHOTOS+" -maxdepth 1 -type f | wc -l; find "+VIDEOS+" -maxdepth 1 -type f | wc -l");String[] v=filecounts.split("\\s+");if(v.length>=2)ui.post(()->counts.setText("Foto: "+v[0]+"    Video: "+v[1]));String disk=exec(s,"df -h /mnt/camera_data | tail -1");ui.post(()->space.setText("MicroSD: "+disk));ui.post(()->startBtn.setEnabled(!previewOn));}finally{s.disconnect();}}
+    private void refresh() throws Exception{Session s=connect();try{String state=getState(s);recording="active".equals(state);
+        String boot=exec(s,"systemctl is-enabled "+SERVICE);String report="Ciclo: "+state.toUpperCase(Locale.ROOT)+"\nAvvio automatico: "+boot.toUpperCase(Locale.ROOT);
+        note(report);ui.post(()->new AlertDialog.Builder(this).setTitle("Stato Banana Pi").setMessage(report).setPositiveButton("OK",null).show());String filecounts=exec(s,"find "+PHOTOS+" -maxdepth 1 -type f | wc -l; find "+VIDEOS+" -maxdepth 1 -type f | wc -l");String[] v=filecounts.split("\\s+");if(v.length>=2)ui.post(()->counts.setText("Foto: "+v[0]+"    Video: "+v[1]));String disk=exec(s,"df -h /mnt/camera_data | tail -1");ui.post(()->space.setText("MicroSD: "+disk));ui.post(()->startBtn.setEnabled(!previewOn));}finally{s.disconnect();}}
     private void service(String action) throws Exception{
         if(action.equals("start") && previewOn) {note("Chiudi prima la preview.");return;}
         Session s=connect();try{
@@ -93,6 +105,61 @@ public class MainActivity extends Activity {
         }finally{s.disconnect();}
         refresh();
     }
+    private String sudo(Session s,String command) throws Exception {
+        ChannelExec c=(ChannelExec)s.openChannel("exec");
+        c.setCommand("sudo -S -p '' "+command);
+        c.setInputStream(new ByteArrayInputStream((password+"\n").getBytes(StandardCharsets.UTF_8)));
+        ByteArrayOutputStream output=new ByteArrayOutputStream();c.setOutputStream(output);c.setErrStream(output);
+        c.connect(8000);long deadline=System.currentTimeMillis()+20000;
+        while(!c.isClosed()&&System.currentTimeMillis()<deadline)Thread.sleep(50);
+        if(!c.isClosed()){c.disconnect();throw new IOException("Timeout comando sudo");}
+        int code=c.getExitStatus();c.disconnect();String result=output.toString("UTF-8");
+        if(code!=0)throw new IOException(result+" (codice "+code+")");return result;
+    }
+    private void autoBoot(String action) throws Exception{
+        Session s=connect();try{sudo(s,"systemctl "+action+" "+SERVICE);
+            String state=getState(s),boot=exec(s,"systemctl is-enabled "+SERVICE);
+            String message="Ciclo: "+state+"\nAvvio automatico: "+boot;
+            note(message);message(message);
+        }finally{s.disconnect();}
+    }
+    private void confirmDelete(){
+        String[] items={"Solo foto","Solo video","Foto e video"};
+        new AlertDialog.Builder(this).setTitle("Cancellazione microSD").setItems(items,(d,which)->{
+            new AlertDialog.Builder(this).setTitle("CONFERMA CANCELLAZIONE")
+              .setMessage("Eliminare definitivamente "+items[which]+" dalla microSD? L’operazione non può essere annullata. Verifica prima i download.")
+              .setNegativeButton("ANNULLA",null).setPositiveButton("ELIMINA",(dd,w)->submit(()->deleteFiles(which))).show();
+        }).show();
+    }
+    private void deleteFiles(int which) throws Exception{
+        if(previewOn)throw new IOException("Chiudi prima la LIVE PREVIEW.");
+        Session s=connect();ChannelSftp c=null;try{
+            String state=getState(s);if(!state.equals("inactive"))throw new IOException("Ferma il ciclo prima della cancellazione: "+state);
+            c=(ChannelSftp)s.openChannel("sftp");c.connect(8000);int n=0;
+            String[] folders=which==0?new String[]{PHOTOS}:which==1?new String[]{VIDEOS}:new String[]{PHOTOS,VIDEOS};
+            for(String folder:folders){for(ChannelSftp.LsEntry e:c.ls(folder)){
+                if(!e.getAttrs().isDir() && !e.getFilename().equals(".") && !e.getFilename().equals("..")){
+                    c.rm(folder+"/"+e.getFilename());n++;
+                }
+            }}note("Cancellazione completata: "+n+" file");message("Eliminati "+n+" file dalla microSD.");
+        }finally{if(c!=null)c.disconnect();s.disconnect();}
+    }
+    private void confirmPower(String action){
+        String title=action.equals("reboot")?"Riavvia Banana Pi":"Spegni Banana Pi";
+        new AlertDialog.Builder(this).setTitle(title)
+          .setMessage("Il collegamento Wi-Fi/SSH verrà interrotto. Arresta prima registrazione e download. Confermi?")
+          .setNegativeButton("ANNULLA",null).setPositiveButton("CONFERMA",(d,w)->submit(()->power(action))).show();
+    }
+    private void power(String action) throws Exception{
+        if(previewOn)throw new IOException("Chiudi prima la preview.");
+        Session s=connect();try{
+            // Avvio differito: il canale SSH potrebbe chiudersi durante il riavvio.
+            ChannelExec c=(ChannelExec)s.openChannel("exec");
+            c.setCommand("sudo -S -p '' sh -c 'sleep 2; systemctl "+action+"'");
+            c.setInputStream(new ByteArrayInputStream((password+"\n").getBytes(StandardCharsets.UTF_8)));
+            c.connect(8000);Thread.sleep(700);note("Comando "+action+" inviato. Il Wi-Fi potrebbe interrompersi.");c.disconnect();
+        }finally{s.disconnect();}
+    }
     private void startPreview(){if(previewOn)return;if(!credentials())return;previewOn=true;previewBtn.setEnabled(false);stopPreviewBtn.setEnabled(true);startBtn.setEnabled(false);worker.execute(()->previewLoop());}
     private void stopPreview(){previewOn=false;ChannelExec c=previewChannel;if(c!=null)c.disconnect();Session s=previewSession;if(s!=null)s.disconnect();ui.post(()->{previewBtn.setEnabled(true);stopPreviewBtn.setEnabled(false);startBtn.setEnabled(true);});}
     private void previewLoop(){int frames=0;Session s=null;ChannelExec c=null;try{
@@ -103,17 +170,29 @@ public class MainActivity extends Activity {
         if(frames==0&&previewOn)throw new IOException("Nessun frame: controlla ffmpeg e formato MJPEG 640x480 su /dev/video1.");
     }catch(Exception ex){if(previewOn)note("Preview: "+ex.getMessage());}finally{if(c!=null)c.disconnect();if(s!=null)s.disconnect();previewChannel=null;previewSession=null;previewOn=false;ui.post(()->{previewBtn.setEnabled(true);stopPreviewBtn.setEnabled(false);startBtn.setEnabled(true);});}}
     private void download(String remote) throws Exception{if(previewOn){note("Ferma prima la preview per scaricare i file.");return;}Session s=connect();ChannelSftp sftp=null;try{
-        sftp=(ChannelSftp)s.openChannel("sftp");sftp.connect(8000);java.util.Vector<ChannelSftp.LsEntry> entries=sftp.ls(remote);int downloaded=0,skipped=0;
+        sftp=(ChannelSftp)s.openChannel("sftp");sftp.connect(8000);java.util.Vector<ChannelSftp.LsEntry> entries=sftp.ls(remote);int downloaded=0,skipped=0;long total=0,completed=0;
+        for(ChannelSftp.LsEntry e:entries)if(!e.getAttrs().isDir()) total+=e.getAttrs().getSize();
+        final long totalBytes=total;
+        ui.post(()->{progress.setProgress(0);progressText.setText("Download in corso...");});
         for(ChannelSftp.LsEntry entry:entries){if(entry.getAttrs().isDir())continue;String filename=entry.getFilename();if(filename.equals(".")||filename.equals(".."))continue;
             String safe=filename.replaceAll("[^A-Za-z0-9._-]","_");String sub=remote.equals(PHOTOS)?"photos":"video";
             Uri dest=findExisting(sub,safe,entry.getAttrs().getSize());if(dest!=null){skipped++;continue;}
             ContentValues values=new ContentValues();values.put(MediaStore.Downloads.DISPLAY_NAME,safe);values.put(MediaStore.Downloads.MIME_TYPE,sub.equals("photos")?"image/jpeg":"application/octet-stream");values.put(MediaStore.Downloads.RELATIVE_PATH,"Download/BananaPiCamera/"+sub);values.put(MediaStore.Downloads.IS_PENDING,1);
             Uri uri=getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,values);if(uri==null)throw new IOException("Impossibile creare "+safe);
-            try(OutputStream out=getContentResolver().openOutputStream(uri)){if(out==null)throw new IOException("Output non disponibile");sftp.get(remote+"/"+filename,out);}catch(Exception err){getContentResolver().delete(uri,null,null);throw err;}
-            ContentValues done=new ContentValues();done.put(MediaStore.Downloads.IS_PENDING,0);getContentResolver().update(uri,done,null,null);downloaded++;if(downloaded%5==0)note("Scaricati "+downloaded+" file da "+sub);
+            try(OutputStream out=getContentResolver().openOutputStream(uri)){if(out==null)throw new IOException("Output non disponibile");
+                final long prior=completed; final String currentName=filename;
+                sftp.get(remote+"/"+filename,out,monitorFor(prior,totalBytes,currentName));}catch(Exception err){getContentResolver().delete(uri,null,null);throw err;}
+            ContentValues done=new ContentValues();done.put(MediaStore.Downloads.IS_PENDING,0);getContentResolver().update(uri,done,null,null);downloaded++;completed+=entry.getAttrs().getSize();if(downloaded%5==0)note("Scaricati "+downloaded+" file da "+sub);
         }
-        note("Download completato: "+downloaded+" nuovi, "+skipped+" già presenti.");
+        note("Download completato: "+downloaded+" nuovi, "+skipped+" già presenti.");ui.post(()->{progress.setProgress(100);progressText.setText("Download completato");});
     }finally{if(sftp!=null)sftp.disconnect();s.disconnect();}}
+    private SftpProgressMonitor monitorFor(long prior,long total,String name){return new SftpProgressMonitor(){
+        long count=0;long last=0;public void init(int op,String src,String dest,long max){}
+        public boolean count(long delta){count+=delta;long now=System.currentTimeMillis();if(now-last>150){last=now;
+            int pct=total<=0?0:(int)Math.min(100,100*(prior+count)/total);
+            ui.post(()->{progress.setProgress(pct);progressText.setText(pct+"% · "+name);});}return true;}
+        public void end(){}
+    };}
     private Uri findExisting(String sub,String filename,long size){android.database.Cursor cursor=null;try{
         String path="Download/BananaPiCamera/"+sub+"/";cursor=getContentResolver().query(MediaStore.Downloads.EXTERNAL_CONTENT_URI,new String[]{MediaStore.Downloads._ID,MediaStore.Downloads.SIZE},MediaStore.Downloads.DISPLAY_NAME+"=? AND "+MediaStore.Downloads.RELATIVE_PATH+"=?",new String[]{filename,path},null);
         if(cursor!=null&&cursor.moveToFirst()){do{if(cursor.getLong(1)==size)return android.content.ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI,cursor.getLong(0));}while(cursor.moveToNext());}
